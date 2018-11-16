@@ -1,0 +1,48 @@
+CSE 140, PROJECT 3 NOTES
+[ https://www.cs.fsu.edu/~engelen/courses/HPC-adv/MMXandSSEexamples.txt ]
+[ https://www.scss.tcd.ie/David.Gregg/cs3014/notes/lecture16-sse1.pdf ]
+
+SSE
+Problem: vectorize the following code with SSE
+
+float a[N], b[N], c[N];
+...
+for (i = 0; i < N; i++)
+  if (a[i] > 0)
+    a[i] = b[i] / c[i];
+
+SSE/SSE2 technology with 128-bit XMM registers (aligned load/store):
+
+Back:
+  movaps   xmm0, _a[ecx]
+  movaps   xmm2, _b[ecx]
+  divps    xmm2, _c[ecx]	set  x[] = |b3/c3   |b2/c2   |b1/c1   |b0/c0   |
+  xorps    xmm1, xmm1		set 0
+  cmpltps  xmm1, xmm0		guards g[]=|a3>0    |a2>0    |a1>0    |a0>0    |
+  movaps   xmm3, xmm1		copy guards g[]
+  andnps   xmm3, xmm0		mask y[] = |!a3>0&a3|!a2>0&a2|!a1>0&a1|!a0>0&a0|
+  andps    xmm2, xmm1		mask z[] = | a3>0&x3| a2>0&x2| a1>0&x1| a0>0&x0|
+  orps     xmm3, xmm2		combine  = |y3|z3   |y2|z2   |y1|z1   |y0|z0   |
+  movaps   _a[ecx], xmm3	store into a[]
+  add      ecx, 16
+  cmp      ecx, edi
+  jl       Back
+
+SSE2 intrinsics (aligned load/store):
+float a[N], b[N], c[N];
+...
+__m128 *av = (__m128*)a; // assume 16-byte aligned
+__m128 *bv = (__m128*)b; // assume 16-byte aligned
+__m128 *cv = (__m128*)c; // assume 16-byte aligned
+__m128 zeros = _mm_setzero_ps();
+for (i = 0; i < N/4; i++)
+{
+  __m128 x = _mm_div_ps(bv[i], cv[i]);
+  __m128 g = _mm_cmplt_ps(av[i], zeros);
+  __m128 y = _mm_andnot_ps(g, av[i]);
+  __m128 z = _mm_and_ps(g, x);
+  av[i] = _mm_or_ps(y, z);
+}
+
+PS suffix means parallel scalar, that is, the operation works on four 32-bit floats.
+  This is SIMD!
