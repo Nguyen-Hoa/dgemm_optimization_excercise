@@ -1,92 +1,154 @@
 #include "xmmintrin.h"
+#include "stdio.h"
+#include "string.h"
+#include "stdlib.h"
 /*
  works cited
 
- SSE examples
- zybooks, Computer Organization and Design; chapters 3, 4, 5, 6
- https://www.scss.tcd.ie/David.Gregg/cs3014/notes/lecture16-sse1.pdf
+matrixcalc.org, because hand calculating matrix products is too long
 
- Loop Unrolling examples
+SSE examples
+  zybooks, Computer Organization and Design; chapters 3, 4, 5, 6
+  https://www.scss.tcd.ie/David.Gregg/cs3014/notes/lecture16-sse1.pdf
 
- Padding examples
- */
+Loop Unrolling examples
+  https://github.com/WillCh/cs267/blob/master/hw1/hw1/dgemm-sse.c
+*/
 
-/*
- C : m x m
- A : m x n
- A (transpose) : n x m
- A * A (transpose) is always a square matrix!
-
- m : height
- n : width (padding!)
-
- */
 void dbg_printmat(int m, int n, float* D);
 
-void dgemm_optimize( int m, int n, float *A, float *C )
+void dgemm( int m, int n, float *A, float *C )
 {
+
     /* consider padding matrix if dimmensions are not optimal */
     int new_m = m;
-    while(new_m % 4 != 0){
+    while(new_m % 16 != 0){
         new_m++;
     }
 
-    /* padded matrix(es) */
-        /* might as well pre transpose matrix during padding phase */
-    float *Apad = (float*) malloc (new_m * n * (sizeof(float)) );
-    memset(Apad, 0, new_m * n * sizeof(float) );
+   int new_n = n;
+   while(new_n % 4 != 0){
+       new_n++;
+   }
+
+    float *result = (float*) malloc( new_m * sizeof(float) ); //temporary matrix to store results, size of one row
+    float *Apad = (float*) malloc (new_m * new_n * (sizeof(float)) ); //padded matrix
+    //float *ATpad = (float*) malloc (new_m * new_n * (sizeof(float)) ); //transposed padded matrix
+    memset(result, 0, sizeof(float) * new_m);
+    memset(Apad, 0, new_m * new_n * sizeof(float) );
+    //memset(ATpad, 0, new_n * new_m * sizeof(float) );
+
     for(int icpy = 0; icpy < n; icpy++){
         memcpy(&Apad[icpy*new_m], &A[icpy*m], sizeof(float) * m);
     }
-    //printf("\nPadded A matrix:");
-    //dbg_printmat(new_m, n, Apad);
 
-    /* temp result */
-    float *result = (float*) malloc( m * sizeof(float) );
-    memset(result, 0, sizeof(float) * m);
+//    for(int icpy = 0; icpy < n; icpy++){
+//        memcpy(&result[0], &A[icpy*m], sizeof(float) * m); //copy row of A[] into result
+//        for(int ycpy = 0; ycpy < m; ycpy++){
+//            memcpy(&ATpad[icpy+ycpy*new_m], &result[ycpy], sizeof(float)); //transpose
+//        }
+//    }
+
+
+//    printf("\nPadded A matrix:");
+//    dbg_printmat(new_m, new_n, Apad);
+//    printf("\nTransposed Padded A matrix:");
+//    dbg_printmat(new_n, new_m, ATpad);
+//    printf("\n");
 
     for(int i = 0; i < m; i++){
-        memset(result, 0, sizeof(float) * m);
-        for(int k = 0; k < n; k++){
-
-            /* loop unrolling goes here, load as much of the row as possible
-            check that the row fits, update iterator
-            same i and k values, constant j values!
-            With padding, this should always be a multiple of four!
+        memset(result, 0, sizeof(float) * new_m);
+       //dbg_printmat(m, n, C);
+        for(int k = 0; k < new_n; k+=4){
+            /*
+            unrolling the k loop, this represents A[i+k*m] in naive.
             */
-            //__m128 v1;
-            //__m128 v2;
-            //__m128 v3;
-            //__m128 v4;
 
-            for(int j = 0; j < m; j+=4){
+            int kp = k + 1;
+            int kpp = k + 2;
+            int kppp = k + 3;
+            __m128 k0 = _mm_load1_ps(&Apad[i+k*new_m]);
+            __m128 k1 = _mm_load1_ps(&Apad[i+kp*new_m]);
+            __m128 k2 = _mm_load1_ps(&Apad[i+kpp*new_m]);
+            __m128 k3 = _mm_load1_ps(&Apad[i+kppp*new_m]);
+
+            for(int j = 0; j < new_m; j+=16){
+              /*
+              unrolling j loop, this represents A[j+k*m] in naive, which is summed with the previous result
+                after each k iteration.
+              */
+
                 /* load previous calculations */
-                __m128 vC = _mm_loadu_ps(&result[j]);
+               __m128 vC = _mm_loadu_ps(&result[j]);
+               __m128 v1 = _mm_loadu_ps(&result[j+4]);
+               __m128 v2 = _mm_loadu_ps(&result[j+8]);
+               __m128 v3 = _mm_loadu_ps(&result[j+12]);
 
                 /* sum the products of A matrices */
-                vC = _mm_add_ps(vC, _mm_mul_ps(_mm_loadu_ps(&A[j+k*m]),
-                                               _mm_load1_ps(&A[i+k*m]) ) );
+               vC = _mm_add_ps(vC, _mm_mul_ps(k0,
+                              _mm_loadu_ps(&Apad[j+k*new_m] )));
+               vC = _mm_add_ps(vC, _mm_mul_ps(k1,
+                              _mm_loadu_ps(&Apad[j+kp*new_m] )));
+               vC = _mm_add_ps(vC, _mm_mul_ps(k2,
+                              _mm_loadu_ps(&Apad[j+kpp*new_m] )));
+               vC = _mm_add_ps(vC, _mm_mul_ps(k3,
+                              _mm_loadu_ps(&Apad[j+kppp*new_m] )));
+
+               v1 = _mm_add_ps(v1, _mm_mul_ps(k0,
+                              _mm_loadu_ps(&Apad[j+4+k*new_m] )));
+               v1 = _mm_add_ps(v1, _mm_mul_ps(k1,
+                              _mm_loadu_ps(&Apad[j+4+kp*new_m] )));
+               v1 = _mm_add_ps(v1, _mm_mul_ps(k2,
+                              _mm_loadu_ps(&Apad[j+4+kpp*new_m] )));
+               v1 = _mm_add_ps(v1, _mm_mul_ps(k3,
+                              _mm_loadu_ps(&Apad[j+4+kppp*new_m] )));
+
+               v2 = _mm_add_ps(v2, _mm_mul_ps(k0,
+                              _mm_loadu_ps(&Apad[j+8+k*new_m] )));
+               v2 = _mm_add_ps(v2, _mm_mul_ps(k1,
+                              _mm_loadu_ps(&Apad[j+8+kp*new_m] )));
+               v2 = _mm_add_ps(v2, _mm_mul_ps(k2,
+                              _mm_loadu_ps(&Apad[j+8+kpp*new_m] )));
+               v2 = _mm_add_ps(v2, _mm_mul_ps(k3,
+                              _mm_loadu_ps(&Apad[j+8+kppp*new_m] )));
+
+               v3 = _mm_add_ps(v3, _mm_mul_ps(k0,
+                              _mm_loadu_ps(&Apad[j+12+k*new_m] )));
+               v3 = _mm_add_ps(v3, _mm_mul_ps(k1,
+                              _mm_loadu_ps(&Apad[j+12+kp*new_m] )));
+               v3 = _mm_add_ps(v3, _mm_mul_ps(k2,
+                              _mm_loadu_ps(&Apad[j+12+kpp*new_m] )));
+               v3 = _mm_add_ps(v3, _mm_mul_ps(k3,
+                              _mm_loadu_ps(&Apad[j+12+kppp*new_m] )));
 
                 /* store as a row, into result[] */
-                _mm_storeu_ps(&result[j], vC);
-
-                /* store transpose of result[] into C[] */
-                int w = j;
-                int y = 0;
-                while (y < m){
-                    C[i+w*m] = result[y];
-                    y++;
-                    w++;
-                }
-
+               _mm_storeu_ps(&result[j], vC);
+               _mm_storeu_ps(&result[j+4], v1);
+               _mm_storeu_ps(&result[j+8], v2);
+               _mm_storeu_ps(&result[j+12], v3);
+            }
+            /*
+            store transpose of result[] into C[]. This is equivalent to C[i+j*m] from naive. I plaed it outside of the J loop because it is a waste of resources to calculate the same after each iteration of j, when it can be done once after each k iteration!
+            */
+            int w = 0;
+            int y = 0;
+            while (y < m){
+                C[i+w*m] = result[y]; //this notation is slightly faster!
+                //memcpy would be faster in the case of a row to row copy, such as in padding matrix above. 
+                //memcpy(&C[i+w*m], &result[y], sizeof(float)); //different notation, maybe this fixes memory problem?
+                y++;
+                w++;
             }
         }
     }
     free(result);
     free(Apad);
+    //free(ATpad);
 }
 
 /*
+
+initial thoughts:
  SSE: probably uses one less for loop? Doing 4 computations at once, so in a 4x4, thats only 4 execs,
  but in a 4x8 that twice (8 execs). vs 8x4 ( 8 execs). False! It just does less calculations, the amount of for loops
  should be the same.
