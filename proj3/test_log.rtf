@@ -1,0 +1,110 @@
+{\rtf1\ansi\ansicpg1252\cocoartf1671
+{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\margl1440\margr1440\vieww9000\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 13.11.18\
+\
+previous test cases matched (optimize and naive), went to professor, and afterwards realized that they do not...\
+new test method: perform both dgemm in one run, rather than in individual. If optimize works, then both should print the same result.\
+Starting with small matrices, naive and optimize result in different matrices...\
+\
+Still not matching. Padding the matrix is not required when it is a square and the dimensions are a multiple of 4.\
+The current order is SSE, Padding, Loop Unrolling. However I am running into a lot of trouble with SSE, maybe try loop unrolling or padding next. \
+	Have already began a little padding, but the current problem there is the shift of elements when a new columns are added. \
+	In loop unrolling, have only declared more SSE variables, but as of right now I assume it is repeating the current calculations, and managing storage.\
+		it seems logical to finish SSE before moving onto loop unrolling because the current storage/calculation problems only multiply with loop unrolling. \
+\
+The values in the optimized matrix is exactly half of those in the naive matrix, this means storage is no longer an issue, but the calculation are incorrect somewhere.\
+	The values were doubled because I did not zero out C matrix after the first calculation, so the second time around the elements were stacked on. \
+	Now to test different dimensions, such as not square and small. \
+\
+tried a 4x8 matrix, the results match, but in both cases, the first 16 seem right, but the bottom 16 seem untouched...\
+	This this does not occur in an 8x4 matrix however. (8 wide 4 high).\
+	Ignoring this issue, I continued with a 32x32 and 43x43 test case\
+		These were with randomly generated numbers similar to benchmark.c,\
+		Due to the size of the matrices, I printed at index 30 and surrounding elements to compare both matrices. \
+		The result were matching elements all around.\
+\
+		43x43, random doubles, index plus/minus 2;\
+			30: match\
+			160: match\
+			1000: no matches \
+			500: no matches\
+			400: no matches\
+			200: no matches\
+			170: match\
+			180: no match\
+\
+			171: match, anything beyond is no match.\
+\
+		8x8, random doubles, index plus/minus 2;\
+			match up until halfway through the matrix, as previously discovered. Occurs at index 31-32.\
+\
+14.11.18\
+\
+Discovered that padding matrix is required with SSE, in the case of odd number columns...\
+	(Error occurs when n is odd, not when m is odd!)\
+Got padding to work, just used memcpy and a for loop to copy row by row.\
+	Tried 5x5 which resulted in a 5x8 with proper zeroes.\
+	Tried 10x10, and calculations were correct up to element 39. \
+\
+Now that padding works, must tweak multiplication algorithm to fit new padded matrix.\
+	dbg_print is not working anymore, something to do with SSE, throws a "THREAD BAD ACCESS" error...\
+		a google search shows that it can be due to the alignment of the SSE storing then accessing?\
+		plausible because print works fine before any SSE instructions, but the C[] isn't modified directly by any SSE instructions, \
+			only indirectly by a temp Float array.\
+	*Fixed it by changing the i iteration of dgemm to go through new_m instead of m, not sure how this worked.\
+	And it stopped working again, I didn't modify any code, definitely a memory issue. \
+		Having trouble accessing the C matrix.\
+\
+16.11.18\
+	\
+Line 88 of dgemm-optimize, change from x =y to memcpy(x,y, size) notation, hoping to fix memory issues. \
+Also added pre-transpose at top of dgemm-optimize, still working out the transpose algo.\
+	Success! transpose works.\
+	Looks like we have to pad the height of the matrix as well since transposing A[] will cause the row to be odd (not a multiple of 4).\
+		How will this change multiplication operation? \
+	Meanwhile there is still the BAD_ACCESS...\
+		Somehow padding both dimensions fixed the BAD_ACCESS?\
+			On second access (nothing changed, just pressed run again) same error...\
+	Reworking multiplication to fit padded and transposed matrices.\
+		C should remain the same size? the padding is zero anyway. \
+\
+21.11.18\
+\
+Long time no see.\
+No BAD_ACCESS, but I anticipate the issue isn't resolve.\
+	second run, BAD_ACCESS.\
+To test, try on school computer and on my PC.\
+Also need to hand calculate what goes on with padded matrix calc,\
+	are there any changes to the procedure? Do the zeroes make no difference beside better loading?\
+\
+26.11.18\
+\
+My SSE algo looks different than the examples I see online. Up to the _mm128_mul() operation, mine and theirs are the same, but during the storage is when they differ. \
+	Trace their SSE DGEMM, then trace mine, see where the steps prouduce different results. \
+I think I have transpose down, after I get SSE to work, loop unrolling should be easier. Also have padded the matrices, so loop unrolling will act as my extra credit choice, if I am able to meet it. \
+	Otherwise is looks like I have at least half of the project finished (:\
+I think BAD_ACCESS is from accessing the matrix after I'ved freed it, since my print function is outside of the dgemm operation, and I free the matrices after the dgemm.\
+\
+27.11.18\
+\
+Fixed BAD_ACCESS, the issue was related to the copying of result[] into C[]; the index variable 'm' was set to equal 'j' when it should have been zero. \
+To recap, dgemm_naive grabs A[0] and multiplies it with A[0-m], and stores each result in the first row of C[]. This is the first interation of 'i', which means in one iteration of 'i', k moves through the first column of C[].\
+Now I have moved onto loop unrolling, I've noticed that it's important I pay attention to the increment amount.\
+	Successful when unrolling the j loop, but trying to unroll the k loop since the j loop doesn't improve as much. So far the value is slightly incorrect, but the GFLOPS are finally better than naive!\
+	I've changed the parameters for padding, and it improves it on the 4th and 5th calculations, but the initial one's are still off. I'm not sure why this is the case, but I do believe I am getting closer to getting the correct values.\
+	The issue could be that the k loop is +=2, and the matrix is padded in multiples of 16 (because j iterates +=16). \
+		My current theories are either k loop needs to iterate +=4 to better fit with the modulo 16 padding, or \
+		because I've unrolled the k loop, I need to adjust how I store the result[] into C[].\
+	After taking out the loop unrolling for j and focusing solely on k loop, I've discovered that the calculation error still occurs, which means the problem resides in the unrolling of the k loop.\
+Moved the result[] transpose into C[] and saw instant improvement! \
+	Used a variable instead of k+1, now fails after 6 calculations instead of 1?\
+	YES! 5 GFLOPS, in addition to k + 1 replacement, I removed the padding in the n direction since I am no longer transposing. \
+	PADDING: pad 'm' for j loop, pad 'n' for k loop!\
+7-8 GFLOPS after unrolling both j and k.\
+\
+}
